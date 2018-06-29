@@ -1,9 +1,9 @@
 ---
-title: "Tipos de filme de FULANO(A)"
+title: "Grupos de rivais do Brasil"
 output:
     html_document:
-    df_print: paged
-theme: sandstone
+        code_folding: hide
+        theme: flatly
 ---
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
@@ -12,11 +12,13 @@ library(here)
 library(cluster)
 library(plotly)
 library(ggdendro)
+library(ggfortify)
+library(broom)
 
 source(here::here("code/lib.R"))
 source(here("code/plota_solucoes_hclust.R"))
 
-theme_set(theme_report())
+theme_set(theme_bw())
 
 knitr::opts_chunk$set(tidy = FALSE,
                       fig.width = 6,
@@ -55,73 +57,55 @@ historicos = jogos_brasil %>%
         )
 ```
 
-
-## Agrupamentos 
+# GAP
 
 ```{r}
-agrupamento_h_2d = historicos %>% 
-    as.data.frame() %>% 
-    column_to_rownames("time2") %>%
-    select(jogos, ganhou) %>%
-    dist(method = "euclidean") %>% 
-    hclust(method = "ward.D")
+plot_clusgap = function(clusgap, title="Gap Statistic calculation results"){
+    require("ggplot2")
+    gstab = data.frame(clusgap$Tab, k=1:nrow(clusgap$Tab))
+    p = ggplot(gstab, aes(k, gap)) + geom_line() + geom_point(size=5)
+    p = p + geom_errorbar(aes(ymax=gap+SE.sim, ymin=gap-SE.sim), width = .2)
+    p = p + ggtitle(title)
+    return(p)
+}
 
-ggdendrogram(agrupamento_h_2d, rotate = TRUE)
+log_historico <- historicos %>% 
+                  mutate(jogos.log = log10(jogos))
 
-data.frame(height = agrupamento_h_2d$height) %>% 
-    mutate(k = 1:n()) %>% 
-    ggplot(aes(x = k, y = height)) + 
-    geom_line(colour = "grey") + 
-    geom_point() + 
-    labs(x = "Número de clusters produzido", y = "Dissimilaridade na junção")
+gaps <- log_historico %>% 
+    select(jogos.log, ganhou, perdeu, empatou) %>% 
+    mutate_all(scale) %>% 
+    clusGap(FUN = kmeans, nstart = 20, K.max = 8)
+
+plot_clusgap(gaps)
+```
+
+# K-Means (Autoplot)
+
+```{r}
+
+log_historico <- historicos %>% 
+                  mutate(jogos.log = log10(jogos))
+
+features <- c('jogos.log', 'ganhou', 'perdeu', 'empatou')
+n_clusters <- 4
+jogos_clusters <- kmeans(log_historico[, features], n_clusters, nstart = 20)
+
+autoplot(jogos_clusters, data = log_historico, frame = TRUE)
 
 ```
 
-**Solução: standardize (aka scale).**
-
 ```{r}
-agrupamento_h_2d = filmes %>% 
-    mutate_at(vars("avaliacao","bilheteria"), 
-              funs(scale)) %>% 
-    column_to_rownames("filme") %>%
-    select("avaliacao", "bilheteria") %>%
-    dist(method = "euclidean") %>% 
-    hclust(method = "centroid")
+log_historico$cluster <- factor(jogos_clusters$cluster)
 
-ggdendrogram(agrupamento_h_2d, rotate = TRUE, theme_dendro = F)
-
-plota_hclusts_2d(agrupamento_h_2d, 
-                 filmes, 
-                 c("avaliacao", "bilheteria"), 
-                 linkage_method = "centroid", ks = 1:6) 
-
+log_historico %>%
+      ggplot(aes(x = jogos,
+                 y = empatou,
+                 size = ganhou,
+                 alpha = 1 - perdeu,
+                 label = time2,
+                 color = cluster)) +
+      geom_jitter() +
+      scale_x_log10()
 ```
 
-**Solução com Log**
-
-```{r}
-filmes %>% 
-    ggplot(aes(x = bilheteria)) + 
-    geom_histogram(bins = 30, fill = paleta[2], color = "black") +
-    scale_x_log10()
-```
-
-```{r}
-agrupamento_h_2d = filmes %>% 
-    mutate(bilheteria = log10(bilheteria)) %>%
-    mutate_at(vars("avaliacao", "bilheteria"), funs(scale)) %>%
-    column_to_rownames("filme") %>%
-    select("avaliacao", "bilheteria") %>%
-    dist(method = "euclidean") %>% 
-    hclust(method = "centroid")
-
-ggdendrogram(agrupamento_h_2d, rotate = TRUE, theme_dendro = F)
-
-filmes2 = filmes %>% mutate(bilheteria = log10(bilheteria))
-plota_hclusts_2d(agrupamento_h_2d, 
-                 filmes2, 
-                 c("avaliacao", "bilheteria"), 
-                 linkage_method = "centroid", ks = 1:6) + 
-    scale_y_log10() + 
-    scale_color_brewer(palette = "Dark2")
-```
