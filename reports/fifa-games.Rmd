@@ -1,5 +1,5 @@
 ---
-title: "Grupos de rivais do Brasil"
+title: "Os rivais do Brasil"
 output:
     html_document:
         code_folding: hide
@@ -32,11 +32,13 @@ paleta = c("#404E4D",
            "#F4743B")
 ```
 
-```{r}
+```{r echo=FALSE, message=FALSE, warning=FALSE}
 games = read_csv(here("data/international-football.csv"))
 ```
 
-# Preparando os dados
+# Os Dados
+
+Nós temos dados de __39054__ jogos oficiais de diferentes campeonatos ou amistosos propostos pela __FIFA__. Para a nossa análise iremos extrair apenas os jogos em que o __Brasil__ participou.
 
 ```{r}
 jogos_brasil = games %>% 
@@ -45,7 +47,17 @@ jogos_brasil = games %>%
            time2 = if_else(home_team == "Brazil", away_team, home_team), 
            score1 = if_else(home_team == "Brazil", home_score, away_score),
            score2 = if_else(home_team == "Brazil", away_score, home_score) 
-    ) 
+    )
+
+```
+
+# Mais filtros...
+
+Dentre os nossos dados temos o time que jogou contra o Brasil, o placar do jogo, o ano em que o jogo foi realizado, se foi campeonato (e qual foi) ou se foi amistoso.
+
+Mas para a nossa análise, iremos observar apenas os dados do placar do jogo e o time que enfrentou o Brasil para que possamos verificar se existe algum padrão nos jogos com adversários do Brasil.
+
+```{r}
 
 historicos = jogos_brasil %>% 
     group_by(time2) %>% 
@@ -57,7 +69,38 @@ historicos = jogos_brasil %>%
         )
 ```
 
-# GAP
+# Finalmente...
+
+Agora sim temos os dados da forma que precisamos para a nossa análise. 
+
+Utilizamos o placar do jogo para inferir se o Brasil ganhou, perdeu ou empatou.
+
+```{r}
+historicos %>% summary()
+```
+
+A partir do sumário acima podemos tirar as seguintes conclusões:
+
+```
+time2   - O Brasil enfrentou 87 times diferentes.
+
+jogos   - O Brasil possui de 1 a 102 jogos contra cada time.
+
+ganhou  - O Brasil ganhou em média cerca de 80% dos jogos registrados.
+
+empatou - O Brasil empatou em média cerca de 12% dos jogos registrados.
+
+perdeu  - O Brasil perdeu em média cerca de 8% dos jogos registrados.
+
+```
+
+# Motivação
+
+Como nós temos os dados de jogos, vitórias, empates e derrotas, surge uma breve curiosidade de saber se os jogos que o Brasil teve podem ser classificados em grupos.
+
+# GAP Statistic
+
+A GAP compara a solução do agrupamento com cada k com a solução em um dataset onde não há estrutura de grupos. Utilizaremos essa essa medida para descobrir uma quantidade ideal de grupos que podemos dividir para que tenhamos bons resultados.
 
 ```{r}
 plot_clusgap = function(clusgap, title="Gap Statistic calculation results"){
@@ -70,42 +113,95 @@ plot_clusgap = function(clusgap, title="Gap Statistic calculation results"){
 }
 
 log_historico <- historicos %>% 
-                  mutate(jogos.log = log10(jogos))
+                  mutate(jogos.qtd = log10(jogos))
 
 gaps <- log_historico %>% 
-    select(jogos.log, ganhou, perdeu, empatou) %>% 
+    select(jogos.qtd, ganhou, perdeu, empatou) %>% 
     mutate_all(scale) %>% 
-    clusGap(FUN = kmeans, nstart = 20, K.max = 8)
+    clusGap(FUN = kmeans, 
+            nstart = 100, 
+            K.max = 8,
+            B = 200,
+            iter.max = 30)
 
 plot_clusgap(gaps)
 ```
 
-# K-Means (Autoplot)
+Como é possível ver acima, temos que quando o k passa de 1 para 2, temos que a estrutura com dois grupos apresenta um possível melhor resultado do que para um grupo apenas. Da mesma forma, quando passa de 6 para 7. 
+
+Particularmente, acredito que 2 seja um valor muito baixo para k, por outro lado, 7 é muito alto. Portanto, iremos utilizar ```k = 4``` que apresenta uma solução boa e que não possui muita variação em relação aos valores que estão a sua volta.
+
+# K-Means
+
+Para gerar os grupos ou _clusters_, iremos utilizar o algoritmo k-means com ```k = 4```. Para realizar o agrupamento iremos utilizar a quantidade de jogos, e para cada jogo, se ganhou, perdeu ou empatou.
 
 ```{r}
 
-log_historico <- historicos %>% 
-                  mutate(jogos.log = log10(jogos))
-
-features <- c('jogos.log', 'ganhou', 'perdeu', 'empatou')
+features <- c('jogos.qtd', 'ganhou', 'perdeu', 'empatou')
 n_clusters <- 4
-jogos_clusters <- kmeans(log_historico[, features], n_clusters, nstart = 20)
+jogos_clusters <- kmeans(log_historico[, features], n_clusters, nstart = 100)
 
 autoplot(jogos_clusters, data = log_historico, frame = TRUE)
 
 ```
 
-```{r}
-log_historico$cluster <- factor(jogos_clusters$cluster)
+A partir da execução do algoritmo recebemos a estrutura como pode ser vista acima. Mas não conseguimos extrair muitas informações dela, pois não sabemos onde cada grupo está localizado justamente por nossa análise ser com mais de duas dimensões.
 
-log_historico %>%
-      ggplot(aes(x = jogos,
-                 y = empatou,
-                 size = ganhou,
-                 alpha = 1 - perdeu,
-                 label = time2,
-                 color = cluster)) +
-      geom_jitter() +
-      scale_x_log10()
+# E agora?
+
+Para isso, iremos utilizar uma visualização individual para cada grupo ou _cluster_ e iremos perceber quais características aqueles jogos possuem em comum para que fossem agrupados.
+
+```{r}
+toclust <- log_historico %>% 
+    select(-time2, -jogos) %>%
+    rownames_to_column(var = "title")
+
+n_clusters <- 4
+km = toclust %>% 
+    select(-title) %>%
+    kmeans(centers = n_clusters, nstart = 100)
+
+p <- km %>% 
+    augment(toclust) %>%
+    gather(key = "variável", value = "valor", -title, -.cluster) %>%
+    ggplot(aes(x = `variável`, y = valor, group = title, colour = .cluster)) + 
+    geom_point(alpha = 0.2) + 
+    geom_line(alpha = .5) + 
+    facet_wrap(~ .cluster)
+
+ggplotly(p)
 ```
 
+Para facilitar a interpretação, é necessário explicar como que é a distribuição dos dados, já que possuem escalas diferentes.
+
+As variáveis ```empatou```, ```ganhou``` e ```perdeu``` variam de 0 a 1, enquanto ```jogos.qtd``` varia de 0 a 2.
+
+Com a visualizaçao acima podemos ver as características de cada grupo, que são:
+
+```
+Cluster 1: Jogos com poucos empates, poucas e muitas vitórias, com uma quantidade relativamente alta de jogos e é o grupo que possui mais derrotas.
+
+Cluster 2: Jogos com poucos ou nenhum empate, muitas vitórias, muitos jogos e poucas derrotas.
+
+Cluster 3: Nenhum empate, todas as vitórias, bem poucos jogos e nenhuma derrota.
+
+Cluster 4: Poucos empates, muitas vitórias, uma quantidade mediana de jogos e com poucas derrotas.
+```
+
+# Os Grupos
+
+## Peladeiro
+
+Foi o nome dado ao __Cluster 1__ por ser um grupo que possui as características misturadas.
+
+## Fominha
+
+Nome dado ao __Cluster 2__ devido a quantidade muito grande de partidas.
+
+## Sem Revanche
+
+O __Cluster 3__ possui bem poucos jogos e em todos eles, o Brasil obteve vitória, por isso, recebeu esse nome.
+
+## É Penta
+
+Por ser um grupo que ganha muito, perde pouco e tem uma quantidade mediana de jogos, esse foi o nome escolhido para o __Cluster 4__.
